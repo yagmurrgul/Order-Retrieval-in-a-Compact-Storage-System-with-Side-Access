@@ -153,9 +153,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="Application.cpp" />
     <ClCompile Include="AuLoKomp_MIP.cpp" />
-    <ClCompile Include="Config.cpp" />
     <ClCompile Include="FolderReader.cpp" />
     <ClCompile Include="GlobalLogger.cpp" />
     <ClCompile Include="GurobiSolution.cpp" />
@@ -173,9 +171,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\..\..\..\gurobi1100\win64\include\gurobi_c++.h" />
-    <ClInclude Include="Application.h" />
     <ClInclude Include="BinaryDecisionVariable.h" />
-    <ClInclude Include="Config.h" />
     <ClInclude Include="ContinuousDecisionVariable.h" />
     <ClInclude Include="DecisionVariables.h" />
     <ClInclude Include="FolderReader.h" />

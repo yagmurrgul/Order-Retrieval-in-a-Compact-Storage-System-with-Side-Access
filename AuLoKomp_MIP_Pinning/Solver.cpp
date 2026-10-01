@@ -3,9 +3,14 @@
 #include <string>
 #include <stack>
 #include <iostream>
+#include <iomanip>
 #include <memory>
 #include <vector>
 #include <chrono>
+#include <algorithm>
+#include <climits>
+#include <cmath>
+#include <limits>
 #include "gurobi_c++.h"
 #include "GlobalLogger.h"
 #include "Logger.h"
@@ -16,6 +21,91 @@
 #include "ContinuousDecisionVariable.h"
 
 using namespace std;
+
+// Number of non-targets in `stack_index` strictly above the lowest target's height.
+// Returns 0 if the stack contains no target. Uses the code's 1-indexed height convention.
+// Formula: stack_height - h_min - |targets in stack| + 1, where h_min = min target height in stack.
+static int compute_C_for_stack(int stack_index,
+                               int stack_height,
+                               const std::vector<UnitLoad>& desired_unit_loads) {
+    int h_min = INT_MAX;
+    int nb_targets = 0;
+    for (const auto& ul : desired_unit_loads) {
+        if (ul.getStack() == stack_index) {
+            nb_targets++;
+            if (ul.getInitialHeight() < h_min) {
+                h_min = ul.getInitialHeight();
+            }
+        }
+    }
+    if (nb_targets == 0) {
+        return 0;
+    }
+    return stack_height - h_min - nb_targets + 1;
+}
+
+// Number of maximal runs of consecutive target heights in `stack_index`.
+// "Consecutive" means h_{j+1} == h_j + 1 on sorted target heights. Returns 0 if empty.
+static int compute_kappa_for_stack(int stack_index,
+                                   const std::vector<UnitLoad>& desired_unit_loads) {
+    std::vector<int> heights;
+    for (const auto& ul : desired_unit_loads) {
+        if (ul.getStack() == stack_index) {
+            heights.push_back(ul.getInitialHeight());
+        }
+    }
+    if (heights.empty()) {
+        return 0;
+    }
+    std::sort(heights.begin(), heights.end());
+    int kappa = 1;
+    for (size_t j = 1; j < heights.size(); j++) {
+        if (heights[j] != heights[j - 1] + 1) {
+            kappa++;
+        }
+    }
+    return kappa;
+}
+
+namespace {
+// Gurobi callback that captures root LP bound, cut count, and time-to-best-incumbent for B&B metrics.
+class SACRPCallback : public GRBCallback {
+public:
+    double root_lp_bound = std::numeric_limits<double>::quiet_NaN();
+    int    cuts_added    = 0;
+    double time_to_best  = 0.0;  // in SECONDS at this point; converted to ms downstream
+    double best_obj_seen = std::numeric_limits<double>::infinity();
+protected:
+    void callback() override {
+        try {
+            if (where == GRB_CB_MIPNODE) {
+                int nodecnt = static_cast<int>(getDoubleInfo(GRB_CB_MIPNODE_NODCNT));
+                if (nodecnt == 0) {
+                    root_lp_bound = getDoubleInfo(GRB_CB_MIPNODE_OBJBND);
+                }
+            }
+            else if (where == GRB_CB_MIP) {
+                cuts_added = static_cast<int>(getDoubleInfo(GRB_CB_MIP_CUTCNT));
+                if (std::isnan(root_lp_bound)) {
+                    double nodecnt = getDoubleInfo(GRB_CB_MIP_NODCNT);
+                    if (nodecnt < 1.0) {
+                        root_lp_bound = getDoubleInfo(GRB_CB_MIP_OBJBND);
+                    }
+                }
+            }
+            else if (where == GRB_CB_MIPSOL) {
+                double obj = getDoubleInfo(GRB_CB_MIPSOL_OBJ);
+                if (obj < best_obj_seen) {
+                    best_obj_seen = obj;
+                    time_to_best  = getDoubleInfo(GRB_CB_RUNTIME);
+                }
+            }
+        } catch (GRBException&) {
+        } catch (...) {
+        }
+    }
+};
+} // namespace
 
 Solver::Solver(const Instance& instance, GRBModel& model, GRBEnv& env, GurobiSolution& solution, const std::string& model_name)
     : _instance(instance), _model(model), _env(env), _solution(solution), _model_name(model_name) {
@@ -42,12 +132,16 @@ auto Solver::setModelName(string model_name) -> void
 }
 
 void Solver::solveandSaveModel() {
-    try {        
+    try {
+        SACRPCallback cb;
+        _model.setCallback(&cb);
+
         auto start = std::chrono::high_resolution_clock::now();
         _model.optimize();
         auto end = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<double, std::milli> ms_double = end - start;        
-        
+        std::chrono::duration<double, std::milli> ms_double = end - start;
+
+
         //if (_model.get(GRB_IntAttr_Status) == GRB_OPTIMAL) {
 
             _solution.setObjectiveValue(_model.get(GRB_DoubleAttr_ObjVal));
@@ -66,15 +160,43 @@ void Solver::solveandSaveModel() {
             double grid_occ = (double)_instance.getNumUnitLoads() / (_instance.getMaxHeight() * _instance.getMaxWidth());
             double ul_occ = (double)_instance.getNumDesiredUnitLoads() / _instance.getNumUnitLoads();
 
-            GlobalLogger::Log(_model_name, 
-                std::to_string(ms_double.count()), 
-                std::to_string(_solution.getObjectiveValue()), 
+            double node_count      = _model.get(GRB_DoubleAttr_NodeCount);
+            double root_bound      = cb.root_lp_bound;
+            int    cuts_added      = cb.cuts_added;
+            double time_to_best_ms = cb.time_to_best * 1000.0;
+
+            std::string node_count_str = std::to_string(static_cast<long long>(node_count));
+            std::string root_bound_str;
+            if (std::isnan(root_bound)) {
+                root_bound_str = "-";
+            }
+            else {
+                std::ostringstream oss;
+                oss << std::fixed << std::setprecision(6) << root_bound;
+                root_bound_str = oss.str();
+            }
+            std::string cuts_added_str = std::to_string(cuts_added);
+            std::string time_to_best_str;
+            if (std::isinf(cb.best_obj_seen)) {
+                time_to_best_str = "-";
+            }
+            else {
+                time_to_best_str = std::to_string(time_to_best_ms);
+            }
+
+            GlobalLogger::Log(_model_name,
+                std::to_string(ms_double.count()),
+                std::to_string(_solution.getObjectiveValue()),
                 std::to_string(_solution.getLB()),
                 std::to_string(_solution.getGap()),
                 std::to_string(_instance.getNumUnitLoads()),
                 std::to_string(_instance.getNumDesiredUnitLoads()),
                 std::to_string(grid_occ),
-                std::to_string(ul_occ)
+                std::to_string(ul_occ),
+                node_count_str,
+                root_bound_str,
+                cuts_added_str,
+                time_to_best_str
                 );
 
             for (const auto& vars : _decision_variables) {
@@ -1147,6 +1269,53 @@ void Solver::createMIPwithPinning_Model2() {
             }
         }
     }
+
+    //cout << "CONSTRAINT 20: CYCLE-SYMMETRY BREAKING (R1 §4.3)" << endl;
+    for (int c = 0; c < _num_stages - 1; c++) {
+        GRBLinExpr y_temp_c = 0;
+        GRBLinExpr y_temp_c_next = 0;
+        for (int i = 0; i < _num_desired_unit_loads; i++) {
+            int K = _desired_unit_loads[i].getNbBoxesBelow();
+            for (int k = 0; k <= K; k++) {
+                y_temp_c += y[i][k][c];
+                y_temp_c_next += y[i][k][c + 1];
+            }
+        }
+        _model.addConstr(y_temp_c >= y_temp_c_next,
+            "Const 20: cycle-symmetry breaking for cycle " + to_string(c));
+    }
+
+    //cout << "CONSTRAINT 21: ENERGY LOWER BOUND (R1 §4.3)" << endl;
+    int total_C = 0;
+    for (int t = 1; t <= max_width; t++) {
+        total_C += compute_C_for_stack(t, stack_heights[t - 1], _desired_unit_loads);
+    }
+    GRBLinExpr e_temp = 0;
+    for (int c = 0; c < _num_stages; c++) {
+        e_temp += e[c];
+    }
+    _model.addConstr(e_temp >= total_C, "Const 21: energy lower bound");
+
+    //cout << "CONSTRAINT 22: CYCLE LOWER BOUND (R1 §4.3)" << endl;
+    int kappa_max = 0;
+    for (int t = 1; t <= max_width; t++) {
+        int kappa_t = compute_kappa_for_stack(t, _desired_unit_loads);
+        if (kappa_t > kappa_max) {
+            kappa_max = kappa_t;
+        }
+    }
+    GRBLinExpr y_temp_all = 0;
+    for (int c = 0; c < _num_stages; c++) {
+        for (int i = 0; i < _num_desired_unit_loads; i++) {
+            int K = _desired_unit_loads[i].getNbBoxesBelow();
+            for (int k = 0; k <= K; k++) {
+                y_temp_all += y[i][k][c];
+            }
+        }
+    }
+    _model.addConstr(y_temp_all >= kappa_max,
+        "Const 22: cycle lower bound (kappa_max = " + to_string(kappa_max) + ")");
+
     _model.write("./model/" + _model_name + ".lp");
     _model.write("./model/" + _model_name + ".mps");
 }
