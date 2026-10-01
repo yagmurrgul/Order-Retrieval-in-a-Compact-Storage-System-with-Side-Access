@@ -1,0 +1,45 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.sdf
+*.VC.db
+*.VC.opendb
+ipch/
+Debug/
+Release/
+x64/
+x86/
+
+# Compiler / linker output
+*.obj
+*.o
+*.pdb
+*.ilk
+*.pch
+*.exe
+*.dll
+*.lib
+*.a
+*.tlog
+
+# NuGet packages (Visual Studio restores them from packages.config)
+packages/
+
+# Archives
+*.zip
+
+# Model instances (not published)
+*.mps
+*.lp
+*.idb
+*.recipe
+*.log
+*.pyc
+__pycache__/
+ /small_instances/
+/aulokomp/aulokomp/data_small/
+/aulokomp/aulokomp/data_large/
+Instance_*.txt
+/test/instances/
+*.FileListAbsolute.txt
