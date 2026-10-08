@@ -1,7 +1,7 @@
 # Order Retrieval in a Compact Storage System with Side Access
 
-Code for the MIP model and the retrieval heuristic for the Side-Access Compact
-Retrieval Problem (SACRP).
+Code for the MIP model, the retrieval heuristic and the dynamic program (DP)
+for the Side-Access Compact Retrieval Problem (SACRP).
 
 ## Requirements
 
@@ -10,6 +10,8 @@ Retrieval Problem (SACRP).
   (free academic licenses: https://www.gurobi.com/academia/).
   If Gurobi is installed elsewhere, update the include/library paths in
   *Project → Properties → C/C++ / Linker*.
+- DP only: the **.NET Core 2.1 SDK** (the project targets `netcoreapp2.1`);
+  no Gurobi needed.
 
 ## Build
 
@@ -44,6 +46,21 @@ bool mip_heur = 1;   // 1 = Gurobi MIP, 0 = heuristic
 Set it to `0` and rebuild to run the heuristic instead. The MIP uses one thread
 and a 600 s time limit (`runGurobi` in the same file).
 
+**DP.** The DP is a separate C# project in `Aulokomp_IISE\`. It solves
+`Instance_1.txt` … `Instance_810.txt` and then `Instance_1_large.txt` …
+`Instance_810_large.txt` from the directory it is started from:
+
+```bat
+cd Aulokomp_IISE\Aulokomp
+copy <Instance_small>\*.txt .
+copy <Instance_large>\*.txt .
+dotnet run -c Release
+```
+
+(or open `Aulokomp_IISE\Aulokomp.sln` in Visual Studio and run **Release**; the
+instance files must then be in the working directory of the run).
+The DP has a 600 s time limit per instance (`new cDP(600)` in `Program.cs`).
+
 ## Input format
 
 One `.txt` file per instance. Each line is one level of the storage grid (top
@@ -65,10 +82,15 @@ written as four spaces. Example (4 stacks, 3 levels, 3 requested unit loads):
   LP bound, cuts added, time to best solution.
 - `solution\<instance>` — per-instance log.
 - `model\<instance>.lp` / `.mps` — the generated MIP (MIP mode only).
+- DP: `Results.txt` (small) and `Results_large.txt` (large), appended, one row
+  per instance: instance number, objective value (`-1` = time limit reached),
+  number of states, runtime (s).
 
 ## Repository layout
 
 | Path | Contents |
 |---|---|
 | `AuLoKomp_MIP_Pinning/` | C++ MIP model and heuristic (Visual Studio project) |
+| `Aulokomp_IISE/` | C# dynamic program (.NET project) |
+| `Instance_small.zip`, `Instance_large.zip` | The 810 small and 810 large instances |
 | `CP-SAT/` | Alternative CP-SAT model (Python, OR-Tools): `python CP-SAT/run.py --start 1 --end 10 --data-dir <instances>`; result CSVs of the reported runs |
