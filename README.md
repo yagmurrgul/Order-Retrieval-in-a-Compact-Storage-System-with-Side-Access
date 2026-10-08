@@ -74,14 +74,15 @@ written as four spaces. Example (4 stacks, 3 levels, 3 requested unit loads):
 ```
 
 ## Output
-MIP and heuristic:
+**MIP and heuristic.** 
 - `solution\combined_output.txt` — one row per instance: instance name, runtime
   (ms), objective value, lower bound, gap, number of unit loads, number of
   requested unit loads, grid occupancy, requested-load share, node count, root
   LP bound, cuts added, time to best solution.
 - `solution\<instance>` — per-instance log.
 - `model\<instance>.lp` / `.mps` — the generated MIP (MIP mode only).
-DP: 
+
+**DP.** 
 - `Results.txt` (small) and `Results_large.txt` (large), appended, one row
   per instance: instance number, objective value (`-1` = time limit reached),
   number of states, runtime (s).
